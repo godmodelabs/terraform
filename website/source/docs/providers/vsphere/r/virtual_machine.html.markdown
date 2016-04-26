@@ -74,6 +74,8 @@ The following arguments are supported:
 * `dns_suffixes` - (Optional) List of name resolution suffixes for the virtual network adapter
 * `dns_servers` - (Optional) List of DNS servers for the virtual network adapter; defaults to 8.8.8.8, 8.8.4.4
 * `network_interface` - (Required) Configures virtual network interfaces; see [Network Interfaces](#network-interfaces) below for details.
+* `wait_for_network_interfaces` - (Optional) Specifies if we should wait for at least one network interface to appear and not only for the guest ip address
+* `network_wait_timeout` - (Optional) How long to wait for network to become active
 * `disk` - (Required) Configures virtual disks; see [Disks](#disks) below for details
 * `cdrom` - (Optional) Configures a CDROM device and mounts an image as its media; see [CDROM](#cdrom) below for more details.
 * `boot_delay` - (Optional) Time in seconds to wait for machine network to be ready.

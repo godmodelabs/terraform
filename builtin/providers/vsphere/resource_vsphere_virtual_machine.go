@@ -238,6 +238,20 @@ func resourceVSphereVirtualMachine() *schema.Resource {
 				},
 			},
 
+			"wait_for_network_interfaces": &schema.Schema{
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+				ForceNew: true,
+			},
+
+			"network_wait_timeout": &schema.Schema{
+				Type:     schema.TypeInt,
+				Optional: true,
+				Default:  600,
+				ForceNew: true,
+			},
+
 			"network_interface": &schema.Schema{
 				Type:     schema.TypeList,
 				Required: true,
@@ -370,6 +384,7 @@ func resourceVSphereVirtualMachine() *schema.Resource {
 			"boot_delay": &schema.Schema{
 				Type:     schema.TypeInt,
 				Optional: true,
+				Default:  0,
 				ForceNew: true,
 			},
 		},
@@ -566,13 +581,13 @@ func resourceVSphereVirtualMachineCreate(d *schema.ResourceData, meta interface{
 	}
 
 	if _, ok := d.GetOk("network_interface.0.ipv4_address"); !ok {
-		if v, ok := d.GetOk("boot_delay"); ok {
+		if v := d.Get("network_wait_timeout").(int); v > 0 {
 			stateConf := &resource.StateChangeConf{
 				Pending:    []string{"pending"},
 				Target:     []string{"active"},
-				Refresh:    waitForNetworkingActive(client, vm.datacenter, vm.Path()),
-				Timeout:    600 * time.Second,
-				Delay:      time.Duration(v.(int)) * time.Second,
+				Refresh:    waitForNetworkingActive(client, vm.datacenter, vm.Path(), d.Get("wait_for_network_interfaces").(bool)),
+				Timeout:    time.Duration(v) * time.Second,
+				Delay:      time.Duration(d.Get("boot_delay").(int)) * time.Second,
 				MinTimeout: 2 * time.Second,
 			}
 
@@ -615,12 +630,27 @@ func resourceVSphereVirtualMachineRead(d *schema.ResourceData, meta interface{})
 
 	var mvm mo.VirtualMachine
 
+	log.Printf("[DEBUG] %#v", dc)
+	// wait for interfaces to appear
+	if v := d.Get("network_wait_timeout").(int); v > 0 {
+		stateConf := &resource.StateChangeConf{
+			Pending:    []string{"pending"},
+			Target:     []string{"active"},
+			Refresh:    waitForNetworkingActive(client, d.Get("datacenter").(string), vmPath(d.Get("folder").(string), d.Get("name").(string)), d.Get("wait_for_network_interfaces").(bool)),
+			Timeout:    time.Duration(v) * time.Second,
+			Delay:      time.Duration(d.Get("boot_delay").(int)) * time.Second,
+			MinTimeout: 2 * time.Second,
+		}
+
+		if _, err := stateConf.WaitForState(); err != nil {
+			return err
+		}
+	}
+
 	collector := property.DefaultCollector(client.Client)
 	if err := collector.RetrieveOne(context.TODO(), vm.Reference(), []string{"guest", "summary", "datastore"}, &mvm); err != nil {
 		return err
 	}
-
-	log.Printf("[DEBUG] %#v", dc)
 	log.Printf("[DEBUG] %#v", mvm.Summary.Config)
 	log.Printf("[DEBUG] %#v", mvm.Guest.Net)
 
@@ -740,7 +770,7 @@ func resourceVSphereVirtualMachineDelete(d *schema.ResourceData, meta interface{
 	return nil
 }
 
-func waitForNetworkingActive(client *govmomi.Client, datacenter, name string) resource.StateRefreshFunc {
+func waitForNetworkingActive(client *govmomi.Client, datacenter, name string, waitForNetworkInterfaces bool) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
 		dc, err := getDatacenter(client, datacenter)
 		if err != nil {
@@ -757,17 +787,30 @@ func waitForNetworkingActive(client *govmomi.Client, datacenter, name string) re
 		}
 
 		var mvm mo.VirtualMachine
+
+		collectorProperties := []string{"summary"}
+		if waitForNetworkInterfaces {
+			collectorProperties = append(collectorProperties, "guest")
+		}
+
 		collector := property.DefaultCollector(client.Client)
-		if err := collector.RetrieveOne(context.TODO(), vm.Reference(), []string{"summary"}, &mvm); err != nil {
+		if err := collector.RetrieveOne(context.TODO(), vm.Reference(), collectorProperties, &mvm); err != nil {
 			log.Printf("[ERROR] %#v", err)
 			return nil, "", err
 		}
 
-		if mvm.Summary.Guest.IpAddress != "" {
+		if mvm.Summary.Guest.IpAddress != "" && (!waitForNetworkInterfaces || len(mvm.Guest.Net) > 0) {
 			log.Printf("[DEBUG] IP address with DHCP: %v", mvm.Summary.Guest.IpAddress)
+			if waitForNetworkInterfaces {
+				log.Printf("[DEBUG] Network interfaces: %v", mvm.Guest.Net)
+			}
 			return mvm.Summary, "active", err
 		} else {
 			log.Printf("[DEBUG] Waiting for IP address")
+			log.Printf("[DEBUG] Summary.Guest.IpAddress: %#v", mvm.Summary.Guest.IpAddress)
+			if waitForNetworkInterfaces {
+				log.Printf("[DEBUG] Guest.Net: %#v", mvm.Guest.Net)
+			}
 			return nil, "pending", err
 		}
 	}

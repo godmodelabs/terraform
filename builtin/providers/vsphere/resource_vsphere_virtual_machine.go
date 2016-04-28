@@ -376,28 +376,32 @@ func resourceVSphereVirtualMachine() *schema.Resource {
 }
 
 func resourceVSphereVirtualMachineUpdate(d *schema.ResourceData, meta interface{}) error {
-	// flag if changes have to be applied
-	hasChanges := false
+	// flag for Reconfigure tast
+	reconfigureRequired := false
+	// flag for Relocate task
+	relocateRequired := false
 	// flag if changes have to be done when powered off
 	rebootRequired := false
 
-	// make config spec
+	// initialize config spec
 	configSpec := types.VirtualMachineConfigSpec{}
+	// initialize relocate spec
+	relocateSpec := types.VirtualMachineRelocateSpec{}
 
 	if d.HasChange("vcpu") {
 		configSpec.NumCPUs = d.Get("vcpu").(int)
-		hasChanges = true
+		reconfigureRequired = true
 		rebootRequired = true
 	}
 
 	if d.HasChange("memory") {
 		configSpec.MemoryMB = int64(d.Get("memory").(int))
-		hasChanges = true
+		reconfigureRequired = true
 		rebootRequired = true
 	}
 
 	// do nothing if there are no changes
-	if !hasChanges {
+	if !reconfigureRequired && !relocateRequired {
 		return nil
 	}
 
@@ -429,18 +433,34 @@ func resourceVSphereVirtualMachineUpdate(d *schema.ResourceData, meta interface{
 		}
 	}
 
-	log.Printf("[INFO] Reconfiguring virtual machine: %s", d.Id())
+	if reconfigureRequired {
+		log.Printf("[INFO] Reconfiguring virtual machine: %s", d.Id())
 
-	task, err := vm.Reconfigure(context.TODO(), configSpec)
-	if err != nil {
-		log.Printf("[ERROR] %s", err)
+		task, err = vm.Reconfigure(context.TODO(), configSpec)
+		if err != nil {
+			log.Printf("[ERROR] %s", err)
+		}
+
+		err = task.Wait(context.TODO())
+		if err != nil {
+			log.Printf("[ERROR] %s", err)
+		}
 	}
+	
+	if relocateRequired {
+		log.Printf("[INFO] Relocating virtual machine: %s", d.Id())
 
-	err = task.Wait(context.TODO())
-	if err != nil {
-		log.Printf("[ERROR] %s", err)
-	}
+		task, err := vm.Relocate(context.TODO(), relocateSpec, types.VirtualMachineMovePriorityLowPriority)
+		if err != nil {
+			log.Printf("[ERROR] %s", err)
+		}
 
+		err = task.Wait(context.TODO())
+		if err != nil {
+			log.Printf("[ERROR] %s", err)
+		}
+ 	}
+ 	
 	if rebootRequired {
 		task, err = vm.PowerOn(context.TODO())
 		if err != nil {

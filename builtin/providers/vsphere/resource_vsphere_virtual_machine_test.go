@@ -234,6 +234,7 @@ func (test TestFuncData) testCheckFuncBasic() (
 	if vmName == "" {
 		vmName = "vsphere_virtual_machine.foo"
 	}
+
 	return testAccCheckVSphereVirtualMachineExists(vmName, &test.vm),
 		resource.TestCheckResourceAttr(vmName, "name", res),
 		resource.TestCheckResourceAttr(vmName, "vcpu", cpu),
@@ -636,6 +637,68 @@ func TestAccVSphereVirtualMachine_createWithExistingVmdk(t *testing.T) {
 					//	"vsphere_virtual_machine.with_existing_vmdk", "disk.2393891804.vmdk", vmdk_path),
 					//resource.TestCheckResourceAttr(
 					//	"vsphere_virtual_machine.with_existing_vmdk", "disk.2393891804.bootable", "true"),
+				),
+			},
+		},
+	})
+}
+
+const testAccCheckVSphereVirtualMachineConfig_withExistingVmdk_updateMemory = `
+resource "vsphere_virtual_machine" "with_existing_vmdk" {
+    name = "terraform-test-with-existing-vmdk"
+%s
+    vcpu = 2
+    memory = 2048
+    network_interface {
+        label = "%s"
+    }
+    disk {
+%s
+        vmdk = "%s"
+	bootable = true
+    }
+}
+`
+
+func TestAccVSphereVirtualMachine_createWithExistingVmdk_updateMemory(t *testing.T) {
+	var vm virtualMachine
+	vmdk_path := os.Getenv("VSPHERE_VMDK_PATH")
+
+	data := setupTemplateFuncDHCPData()
+	config := fmt.Sprintf(
+		testAccCheckVSphereVirtualMachineConfig_withExistingVmdk,
+		data.locationOpt,
+		data.label,
+		data.datastoreOpt,
+		vmdk_path,
+	)
+	configUpdate := fmt.Sprintf(
+		testAccCheckVSphereVirtualMachineConfig_withExistingVmdk_updateMemory,
+		data.locationOpt,
+		data.label,
+		data.datastoreOpt,
+		vmdk_path,
+	)
+	log.Printf("[DEBUG] template= %s", testAccCheckVSphereVirtualMachineConfig_withExistingVmdk)
+	log.Printf("[DEBUG] template config= %s", config)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckVSphereVirtualMachineDestroy,
+		Steps: []resource.TestStep{
+			resource.TestStep{
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					TestFuncData{vm: vm, label: data.label, vmName: "vsphere_virtual_machine.with_existing_vmdk",
+						vmResource: "terraform-test-with-existing-vmdk"}.testCheckFuncBasic(),
+				),
+			},
+			resource.TestStep{
+				Config: configUpdate,
+				Check: resource.ComposeTestCheckFunc(
+					TestFuncData{vm: vm, label: data.label, mem: "2048", vmName: "vsphere_virtual_machine.with_existing_vmdk",
+						vmResource: "terraform-test-with-existing-vmdk"}.testCheckFuncBasic(),
 				),
 			},
 		},

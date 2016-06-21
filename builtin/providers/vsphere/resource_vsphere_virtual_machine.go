@@ -619,12 +619,6 @@ func resourceVSphereVirtualMachineUpdate(d *schema.ResourceData, meta interface{
 		}
 	}
 
-	ip, err := vm.WaitForIP(context.TODO())
-	if err != nil {
-		return err
-	}
-	log.Printf("[DEBUG] ip address: %v", ip)
-
 	return resourceVSphereVirtualMachineRead(d, meta)
 }
 
